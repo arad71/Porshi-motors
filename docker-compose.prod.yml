@@ -1,0 +1,26 @@
+# Production add-on: Caddy in front with automatic HTTPS (Let's Encrypt).
+# Use:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# (deploy/setup-server.sh and deploy/update.sh do this for you)
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [web]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  caddy_data:
+  caddy_config:

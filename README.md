@@ -4,7 +4,7 @@ Electric bike sales, service and after-sales system for Porshi Motors, Kushtia.
 
 | Part | What it is | Address (Docker) |
 |---|---|---|
-| Public website | Models, offers, compare, EMI calculator, test ride / service / quotation / finance forms, spare parts, About, WhatsApp / Messenger / Call buttons | `http://localhost:8080/` |
+| Public website | Models, offers, compare, EMI calculator, test ride / service / quotation / finance forms, spare parts, About, WhatsApp / Messenger / Call buttons | `https://motors.porshi.tech` (locally `http://localhost:8080`) |
 | Customer portal | Phone + SMS code sign-in; bike, battery health, warranty, next service, payments, balance | `/portal` |
 | Admin system | Sales, Service, Stock, CRM and System modules for six staff roles | `/admin` |
 | API | FastAPI, with interactive documentation | `/api/docs` |
@@ -35,6 +35,10 @@ Open `http://localhost:8080`. The first start creates the tables and loads the s
 
 Customer portal: `01711000101` (Rahim) or `01911000202` (Salma). In demo mode the code is `1234`.
 
+## Deploying to Contabo (motors.porshi.tech)
+
+See **[DEPLOY.md](DEPLOY.md)**. One script sets up the server, HTTPS, firewall and daily backups.
+
 ## Before going live
 
 1. In `.env`: set a long random `SECRET_KEY`, a strong `DB_PASSWORD`, `DEMO_MODE=false`, `SEED_ON_START=false`, and `PUBLIC_URL` to the real address.
@@ -44,8 +48,8 @@ Customer portal: `01711000101` (Rahim) or `01911000202` (Salma). In demo mode th
    docker compose exec api python -m app.create_admin "Owner name" 017XXXXXXXX "a-strong-password"
    ```
 4. Sign in, then fill in **Settings** (real phone, WhatsApp, Facebook page, address, opening hours, brands, warranty periods, finance rate, offers), the **Website catalogue** (models, photos, parts) and **Bikes** (receive each bike with chassis, motor, controller, charger and battery numbers).
-5. Connect an SMS gateway (below), then put HTTPS in front (for example Caddy or Nginx with Let's Encrypt) and point `porshimotors.com` at the server.
-6. Back up the database daily, e.g. `docker compose exec db pg_dump -U porshi porshi | gzip > backup-$(date +%F).sql.gz`, and copy the file off the server.
+5. Connect an SMS gateway (below). On Contabo, HTTPS is handled by Caddy (see DEPLOY.md).
+6. Backups run daily on the server (`deploy/backup.sh`); copy them off the server too.
 
 ### SMS
 
