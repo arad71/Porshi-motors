@@ -52,7 +52,7 @@ docker compose exec api python -m app.create_admin "Owner name" 017XXXXXXXX "a-s
 
 The website container listens on **port 8095**, on this machine only. If 8095 is taken too, add `--port` with any free port, e.g. `--port 8096`. The script checks the port before starting and lists the ports in use if it's busy.
 
-**If this server already hosts other websites** (Nginx, Apache or another app already using ports 80/443), see [Server already runs other websites](#server-already-runs-other-websites) below. The script detects this and tells you.
+**If this server already hosts other websites** (Nginx, Apache or another app already using ports 80/443), see [Server already runs other websites](#server-already-runs-other-websites-existing-caddy) below. The script detects this and tells you.
 
 The script:
 
@@ -83,25 +83,56 @@ When it finishes, open **https://motors.porshi.tech**.
    - **Staff and roles**: one account per person, so the audit log shows who did what
 3. **SMS**: put your gateway details in `.env` (`SMS_PROVIDER=http`, `SMS_API_URL`, `SMS_API_KEY`, `SMS_SENDER`), then run `bash deploy/update.sh`. Customers can't sign in to the portal until SMS works, unless demo mode is on.
 
-## Server already runs other websites
+## Server already runs other websites (existing Caddy)
 
-Only one program can use ports 80 and 443. If another site's web server already uses them, Porshi Motors runs without its own HTTPS layer, and you add motors.porshi.tech to the web server that is already there:
-
-```bash
-bash deploy/setup-server.sh --behind-proxy --port 8095 --demo     # or another free port
-```
-
-At the end the script prints the exact steps. For **Nginx** they are:
+Only one program can use ports 80 and 443. Your server already runs **Caddy** there, so Porshi Motors runs behind it without starting a second Caddy:
 
 ```bash
-cp deploy/nginx-site.motors.porshi.tech.conf /etc/nginx/sites-available/motors.porshi.tech
-ln -s /etc/nginx/sites-available/motors.porshi.tech /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
-apt install -y certbot python3-certbot-nginx     # if not installed yet
-certbot --nginx -d motors.porshi.tech            # adds HTTPS
+cd /opt/porshi-motors
+git pull
+bash deploy/setup-server.sh --behind-proxy --demo          # add --port 8096 if 8095 is taken
 ```
 
-For **Apache**, **Caddy** or a control panel (aaPanel, CyberPanel, Plesk…), add a site for `motors.porshi.tech` that forwards to `http://127.0.0.1:8095` and turn on its Let's Encrypt option.
+The script works out how your Caddy runs and prints the exact block to add. Setup doesn't change your existing Caddy config itself, because your other sites depend on it.
+
+**Caddy installed on the server** (`systemctl status caddy` shows it running). Add to `/etc/caddy/Caddyfile`:
+
+```
+motors.porshi.tech {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8095
+}
+```
+
+Then:
+
+```bash
+caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+```
+
+**Caddy running in a Docker container.** Inside a container, `127.0.0.1` means the container itself, so it reaches Porshi Motors over a shared Docker network instead. The script connects your Caddy container to the `porshi-motors` network. Add this block to that Caddy's Caddyfile:
+
+```
+motors.porshi.tech {
+	encode zstd gzip
+	reverse_proxy porshi-web:80
+}
+```
+
+Reload it with `docker exec <caddy-container> caddy reload --config /etc/caddy/Caddyfile`. The connection is lost if that Caddy container is re-created, so also add the network to your Caddy's `docker-compose.yml`:
+
+```yaml
+services:
+  caddy:                 # your Caddy service name
+    networks: [default, porshi-motors]
+networks:
+  porshi-motors:
+    external: true
+```
+
+Either way, Caddy gets the HTTPS certificate for motors.porshi.tech on its own once the DNS record points at the server.
+
+Servers using **Nginx** instead: setup detects it and prints the Nginx steps (`deploy/nginx-site.conf` plus `certbot --nginx -d motors.porshi.tech`).
 
 ## Everyday operations
 

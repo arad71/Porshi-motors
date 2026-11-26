@@ -47,6 +47,10 @@ services:
     restart: unless-stopped
     depends_on: [api]
     logging: *logs
+    networks:
+      default:
+        # fixed name so an existing Caddy container on this server can reach the site as porshi-web:80
+        aliases: [porshi-web]
     ports:
       # Only reachable from this machine. On the server, Caddy (docker-compose.prod.yml) serves HTTPS.
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8095}:80"
@@ -54,3 +58,7 @@ services:
 volumes:
   pgdata:
   uploads:
+
+networks:
+  default:
+    name: porshi-motors

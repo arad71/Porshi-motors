@@ -8,9 +8,9 @@
 # --demo          loads the sample Kushtia data and shows portal codes on screen (for showing the owner).
 #                 Leave it out for real use; then create the first admin with the command printed at the end.
 # --port N        local port for the website container (default 8095). Must be free on this server.
-# --behind-proxy  this server already runs a web server (Nginx, Apache, Caddy…) on ports 80/443.
-#                 Porshi Motors then does not start its own HTTPS; you add motors.porshi.tech to the
-#                 existing web server (see deploy/nginx-site.conf and DEPLOY.md).
+# --behind-proxy  this server already runs a web server on ports 80/443 (Caddy, Nginx…).
+#                 Porshi Motors then does not start its own HTTPS. The script detects the existing
+#                 web server and prints the exact site block to add to it (see DEPLOY.md).
 set -euo pipefail
 
 DOMAIN="motors.porshi.tech"
@@ -55,6 +55,21 @@ apt-get install -y ca-certificates curl git ufw unattended-upgrades iproute2
 
 port_owner() { ss -ltnpH "sport = :$1" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1; }
 port_busy() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+# What already serves ports 80/443: docker-caddy:<container>, system-caddy, nginx, apache or unknown
+detect_proxy() {
+  local c owner
+  for p in 443 80; do
+    c="$(docker ps --filter "publish=$p" --format '{{.Names}} {{.Image}}' 2>/dev/null | grep -i caddy | grep -v porshi | head -1 | cut -d' ' -f1)"
+    [ -n "$c" ] && { echo "docker-caddy:$c"; return; }
+  done
+  owner="$(port_owner 443)"; [ -n "$owner" ] || owner="$(port_owner 80)"
+  case "$owner" in
+    caddy) echo system-caddy ;;
+    nginx) echo nginx ;;
+    apache2|httpd) echo apache ;;
+    *) echo unknown ;;
+  esac
+}
 # true when the port is held by one of our own Porshi Motors containers (re-running the script)
 ours() { docker ps --filter "publish=$1" --format '{{.Names}}' 2>/dev/null | grep -q porshi; }
 
@@ -68,9 +83,10 @@ fi
 if [ "$PROXY" = "caddy" ]; then
   for p in 80 443; do
     if port_busy "$p" && ! ours "$p"; then
-      echo "   Port $p is already used by: $(port_owner "$p" || true)."
-      echo "   This server already serves websites. Re-run with --behind-proxy and add motors.porshi.tech"
-      echo "   to that web server instead (see DEPLOY.md, \"Server already runs other websites\")."
+      echo "   Port $p is already used by: $(detect_proxy | sed 's/^docker-caddy:/Caddy in Docker container /; s/^system-caddy/Caddy/')."
+      echo "   This server already serves websites, so Porshi Motors should sit behind that web server."
+      echo "   Re-run with --behind-proxy:"
+      echo "     bash deploy/setup-server.sh --behind-proxy --port $PORT $([ "$DEMO" = true ] && echo --demo)"
       exit 1
     fi
   done
@@ -160,13 +176,49 @@ if [ "$PROXY" = caddy ]; then
   if [ "${OK:-}" = 1 ]; then echo; echo "Porshi Motors is live at https://$DOMAIN"
   else echo "HTTPS is not answering yet. Check: $COMPOSE logs --tail=80 caddy"; fi
 else
-  sed "s/__PORT__/$PORT/g; s/__DOMAIN__/$DOMAIN/g" deploy/nginx-site.conf > "deploy/nginx-site.$DOMAIN.conf"
+  KIND="$(detect_proxy)"
+  SNIP="deploy/site.$DOMAIN.caddy"
   echo
-  echo "Now add $DOMAIN to your existing web server. For Nginx:"
-  echo "  cp deploy/nginx-site.$DOMAIN.conf /etc/nginx/sites-available/$DOMAIN"
-  echo "  ln -s /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/"
-  echo "  nginx -t && systemctl reload nginx"
-  echo "  certbot --nginx -d $DOMAIN        # HTTPS certificate (apt install certbot python3-certbot-nginx)"
+  echo "======================================================================"
+  case "$KIND" in
+    docker-caddy:*)
+      CADDY="${KIND#docker-caddy:}"
+      docker network connect porshi-motors "$CADDY" 2>/dev/null || true
+      printf '%s {\n\tencode zstd gzip\n\treverse_proxy porshi-web:80\n}\n' "$DOMAIN" > "$SNIP"
+      echo "Your Caddy runs in Docker (container: $CADDY). It is now connected to the"
+      echo "porshi-motors network, so it can reach the site as porshi-web:80."
+      echo
+      echo "1. Add this block to that Caddy's Caddyfile (saved in $APP_DIR/$SNIP):"
+      echo; sed 's/^/     /' "$SNIP"; echo
+      echo "2. Reload it:"
+      echo "     docker exec $CADDY caddy reload --config /etc/caddy/Caddyfile"
+      echo "   (use the Caddyfile path inside that container if it is different)"
+      echo
+      echo "3. So the connection survives re-creating that Caddy container, add to its docker-compose.yml:"
+      echo "     services:  <caddy service>:  networks: [default, porshi-motors]"
+      echo "     networks:  porshi-motors:  external: true"
+      ;;
+    nginx)
+      sed "s/__PORT__/$PORT/g; s/__DOMAIN__/$DOMAIN/g" deploy/nginx-site.conf > "deploy/nginx-site.$DOMAIN.conf"
+      echo "Your server uses Nginx. Add the site:"
+      echo "  cp deploy/nginx-site.$DOMAIN.conf /etc/nginx/sites-available/$DOMAIN"
+      echo "  ln -s /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/"
+      echo "  nginx -t && systemctl reload nginx"
+      echo "  certbot --nginx -d $DOMAIN"
+      ;;
+    *)
+      printf '%s {\n\tencode zstd gzip\n\treverse_proxy 127.0.0.1:%s\n}\n' "$DOMAIN" "$PORT" > "$SNIP"
+      [ "$KIND" = system-caddy ] && echo "Your server uses Caddy (installed on the system)." || echo "Add $DOMAIN to the web server on ports 80/443, forwarding to http://127.0.0.1:$PORT."
+      echo
+      echo "1. Add this block to the Caddyfile, usually /etc/caddy/Caddyfile (saved in $APP_DIR/$SNIP):"
+      echo; sed 's/^/     /' "$SNIP"; echo
+      echo "2. Check and reload:"
+      echo "     caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy"
+      ;;
+  esac
+  echo
+  echo "Caddy gets the HTTPS certificate for $DOMAIN by itself. Then open https://$DOMAIN"
+  echo "======================================================================"
 fi
 if [ "$DEMO" = "true" ]; then
   echo "Demo data loaded. Staff sign-in: 01711003001 / porshi123 (see README for all roles)."
