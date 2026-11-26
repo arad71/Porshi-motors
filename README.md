@@ -4,7 +4,7 @@ Electric bike sales, service and after-sales system for Porshi Motors, Kushtia.
 
 | Part | What it is | Address (Docker) |
 |---|---|---|
-| Public website | Models, offers, compare, EMI calculator, test ride / service / quotation / finance forms, spare parts, About, WhatsApp / Messenger / Call buttons | `https://motors.porshi.tech` (locally `http://localhost:8080`) |
+| Public website | Models, offers, compare, EMI calculator, test ride / service / quotation / finance forms, spare parts, About, WhatsApp / Messenger / Call buttons | `https://motors.porshi.tech` (locally `http://localhost:8095`) |
 | Customer portal | Phone + SMS code sign-in; bike, battery health, warranty, next service, payments, balance | `/portal` |
 | Admin system | Sales, Service, Stock, CRM and System modules for six staff roles | `/admin` |
 | API | FastAPI, with interactive documentation | `/api/docs` |
@@ -20,7 +20,7 @@ cp .env.example .env        # then edit SECRET_KEY and DB_PASSWORD
 docker compose up -d --build
 ```
 
-Open `http://localhost:8080`. The first start creates the tables and loads the sample Kushtia data.
+Open `http://localhost:8095`. The first start creates the tables and loads the sample Kushtia data.
 
 **Demo sign-ins** (password `porshi123` for all staff):
 

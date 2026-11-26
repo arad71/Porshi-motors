@@ -3,15 +3,21 @@
 #
 #   ssh root@YOUR_SERVER_IP
 #   git clone https://github.com/arad71/Porshi-motors.git /opt/porshi-motors
-#   cd /opt/porshi-motors && bash deploy/setup-server.sh --email you@example.com [--demo]
+#   cd /opt/porshi-motors && bash deploy/setup-server.sh --email you@example.com [--demo] [--port 8095]
 #
-# --demo  loads the sample Kushtia data and shows portal codes on screen (for showing the owner).
-#         Leave it out for real use; then create the first admin with the command printed at the end.
+# --demo          loads the sample Kushtia data and shows portal codes on screen (for showing the owner).
+#                 Leave it out for real use; then create the first admin with the command printed at the end.
+# --port N        local port for the website container (default 8095). Must be free on this server.
+# --behind-proxy  this server already runs a web server (Nginx, Apache, Caddy…) on ports 80/443.
+#                 Porshi Motors then does not start its own HTTPS; you add motors.porshi.tech to the
+#                 existing web server (see deploy/nginx-site.conf and DEPLOY.md).
 set -euo pipefail
 
 DOMAIN="motors.porshi.tech"
 EMAIL=""
 DEMO="false"
+PORT="8095"
+PROXY="caddy"
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -20,10 +26,13 @@ while [ $# -gt 0 ]; do
     --domain) DOMAIN="$2"; shift 2 ;;
     --demo) DEMO="true"; shift ;;
     --skip-dns-check) SKIP_DNS=1; shift ;;
+    --port) PORT="$2"; shift 2 ;;
+    --behind-proxy) PROXY="existing"; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
-[ -n "$EMAIL" ] || { echo "Give an email for HTTPS certificate notices: --email you@example.com"; exit 1; }
+[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || { echo "--port must be a number from 1024 to 65535"; exit 1; }
+[ "$PROXY" = "existing" ] || [ -n "$EMAIL" ] || { echo "Give an email for HTTPS certificate notices: --email you@example.com"; exit 1; }
 [ "$(id -u)" -eq 0 ] || { echo "Run as root (or with sudo)."; exit 1; }
 
 echo "==> Checking that $DOMAIN points to this server"
@@ -42,7 +51,31 @@ echo "==> Updating the system and setting the time zone"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y ca-certificates curl git ufw unattended-upgrades
+apt-get install -y ca-certificates curl git ufw unattended-upgrades iproute2
+
+port_owner() { ss -ltnpH "sport = :$1" 2>/dev/null | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1; }
+port_busy() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+# true when the port is held by one of our own Porshi Motors containers (re-running the script)
+ours() { docker ps --filter "publish=$1" --format '{{.Names}}' 2>/dev/null | grep -q porshi; }
+
+echo "==> Checking ports"
+if port_busy "$PORT" && ! ours "$PORT"; then
+  echo "   Port $PORT is already used by: $(port_owner "$PORT" || true)."
+  echo "   Pick a free one, e.g.:  bash deploy/setup-server.sh --email $EMAIL --port 8096 $([ "$DEMO" = true ] && echo --demo)"
+  echo "   Ports in use now: $(ss -ltnH | awk '{print $4}' | sed 's/.*://' | sort -un | tr '\n' ' ')"
+  exit 1
+fi
+if [ "$PROXY" = "caddy" ]; then
+  for p in 80 443; do
+    if port_busy "$p" && ! ours "$p"; then
+      echo "   Port $p is already used by: $(port_owner "$p" || true)."
+      echo "   This server already serves websites. Re-run with --behind-proxy and add motors.porshi.tech"
+      echo "   to that web server instead (see DEPLOY.md, \"Server already runs other websites\")."
+      exit 1
+    fi
+  done
+fi
+echo "   Website port $PORT is free."
 timedatectl set-timezone Asia/Dhaka || true
 dpkg-reconfigure -f noninteractive unattended-upgrades || true
 
@@ -59,7 +92,7 @@ if ! command -v docker >/dev/null 2>&1; then
   systemctl enable --now docker
 fi
 
-echo "==> Firewall: allow SSH, HTTP and HTTPS only"
+echo "==> Firewall: allow SSH, HTTP and HTTPS (existing rules are kept)"
 ufw allow OpenSSH
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -83,7 +116,8 @@ PUBLIC_URL=https://$DOMAIN
 SECRET_KEY=$(rand 64)
 DB_PASSWORD=$(rand 32)
 WEB_BIND=127.0.0.1
-WEB_PORT=8080
+WEB_PORT=$PORT
+USE_CADDY=$([ "$PROXY" = caddy ] && echo true || echo false)
 DEMO_MODE=$DEMO
 SEED_ON_START=$DEMO
 SMS_PROVIDER=console
@@ -93,11 +127,17 @@ SMS_SENDER=PORSHI
 ENV
   chmod 600 .env
 else
-  echo "==> Keeping the existing .env"
+  echo "==> Keeping the existing .env (updating port and proxy mode)"
+  set_env() { if grep -q "^$1=" .env; then sed -i "s|^$1=.*|$1=$2|" .env; else echo "$1=$2" >> .env; fi; }
+  set_env WEB_PORT "$PORT"
+  set_env USE_CADDY "$([ "$PROXY" = caddy ] && echo true || echo false)"
+  if [ -n "$EMAIL" ]; then set_env ACME_EMAIL "$EMAIL"; fi
 fi
+COMPOSE="docker compose -f docker-compose.yml"
+[ "$PROXY" = caddy ] && COMPOSE="$COMPOSE -f docker-compose.prod.yml"
 
 echo "==> Building and starting (first build takes a few minutes)"
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+$COMPOSE up -d --build --remove-orphans
 
 echo "==> Daily database backup at 02:30"
 chmod +x deploy/*.sh
@@ -105,16 +145,28 @@ cat > /etc/cron.d/porshi-backup <<CRON
 30 2 * * * root $APP_DIR/deploy/backup.sh >> /var/log/porshi-backup.log 2>&1
 CRON
 
-echo "==> Waiting for the site"
+echo "==> Waiting for the app on port $PORT"
 for i in $(seq 1 60); do
-  if curl -fsS "https://$DOMAIN/api/health" >/dev/null 2>&1; then OK=1; break; fi
+  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then LOCAL=1; break; fi
   sleep 5
 done
-if [ "${OK:-}" = 1 ]; then
-  echo
-  echo "Porshi Motors is live at https://$DOMAIN"
+[ "${LOCAL:-}" = 1 ] || { echo "The app did not start. Check: $COMPOSE logs --tail=80"; exit 1; }
+echo "   App is running on 127.0.0.1:$PORT"
+if [ "$PROXY" = caddy ]; then
+  for i in $(seq 1 24); do
+    if curl -fsS "https://$DOMAIN/api/health" >/dev/null 2>&1; then OK=1; break; fi
+    sleep 5
+  done
+  if [ "${OK:-}" = 1 ]; then echo; echo "Porshi Motors is live at https://$DOMAIN"
+  else echo "HTTPS is not answering yet. Check: $COMPOSE logs --tail=80 caddy"; fi
 else
-  echo "Started, but https://$DOMAIN is not answering yet. Check: docker compose -f docker-compose.yml -f docker-compose.prod.yml logs caddy api"
+  sed "s/__PORT__/$PORT/g; s/__DOMAIN__/$DOMAIN/g" deploy/nginx-site.conf > "deploy/nginx-site.$DOMAIN.conf"
+  echo
+  echo "Now add $DOMAIN to your existing web server. For Nginx:"
+  echo "  cp deploy/nginx-site.$DOMAIN.conf /etc/nginx/sites-available/$DOMAIN"
+  echo "  ln -s /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/"
+  echo "  nginx -t && systemctl reload nginx"
+  echo "  certbot --nginx -d $DOMAIN        # HTTPS certificate (apt install certbot python3-certbot-nginx)"
 fi
 if [ "$DEMO" = "true" ]; then
   echo "Demo data loaded. Staff sign-in: 01711003001 / porshi123 (see README for all roles)."

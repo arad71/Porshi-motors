@@ -3,8 +3,11 @@
 #   cd /opt/porshi-motors && bash deploy/update.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+COMPOSE="docker compose -f docker-compose.yml"
+grep -q "^USE_CADDY=false" .env 2>/dev/null || COMPOSE="$COMPOSE -f docker-compose.prod.yml"
 bash deploy/backup.sh
 git pull --ff-only
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+$COMPOSE up -d --build --remove-orphans
 docker image prune -f >/dev/null
-echo "Updated. Health: $(curl -fsS "https://$(grep ^DOMAIN= .env | cut -d= -f2)/api/health" || echo 'not answering yet')"
+PORT="$(grep ^WEB_PORT= .env | cut -d= -f2)"
+echo "Updated. Health: $(curl -fsS "http://127.0.0.1:${PORT:-8095}/api/health" || echo 'not answering yet')"

@@ -50,6 +50,10 @@ bash deploy/setup-server.sh --email you@example.com
 docker compose exec api python -m app.create_admin "Owner name" 017XXXXXXXX "a-strong-password"
 ```
 
+The website container listens on **port 8095**, on this machine only. If 8095 is taken too, add `--port` with any free port, e.g. `--port 8096`. The script checks the port before starting and lists the ports in use if it's busy.
+
+**If this server already hosts other websites** (Nginx, Apache or another app already using ports 80/443), see [Server already runs other websites](#server-already-runs-other-websites) below. The script detects this and tells you.
+
 The script:
 
 - checks that motors.porshi.tech points at this server
@@ -79,7 +83,29 @@ When it finishes, open **https://motors.porshi.tech**.
    - **Staff and roles**: one account per person, so the audit log shows who did what
 3. **SMS**: put your gateway details in `.env` (`SMS_PROVIDER=http`, `SMS_API_URL`, `SMS_API_KEY`, `SMS_SENDER`), then run `bash deploy/update.sh`. Customers can't sign in to the portal until SMS works, unless demo mode is on.
 
+## Server already runs other websites
+
+Only one program can use ports 80 and 443. If another site's web server already uses them, Porshi Motors runs without its own HTTPS layer, and you add motors.porshi.tech to the web server that is already there:
+
+```bash
+bash deploy/setup-server.sh --behind-proxy --port 8095 --demo     # or another free port
+```
+
+At the end the script prints the exact steps. For **Nginx** they are:
+
+```bash
+cp deploy/nginx-site.motors.porshi.tech.conf /etc/nginx/sites-available/motors.porshi.tech
+ln -s /etc/nginx/sites-available/motors.porshi.tech /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+apt install -y certbot python3-certbot-nginx     # if not installed yet
+certbot --nginx -d motors.porshi.tech            # adds HTTPS
+```
+
+For **Apache**, **Caddy** or a control panel (aaPanel, CyberPanel, Plesk…), add a site for `motors.porshi.tech` that forwards to `http://127.0.0.1:8095` and turn on its Let's Encrypt option.
+
 ## Everyday operations
+
+The commands below use both compose files. If you set up with `--behind-proxy`, leave out `-f docker-compose.prod.yml`. The `deploy/*.sh` scripts work this out for you.
 
 | Task | Command (in `/opt/porshi-motors`) |
 |---|---|
@@ -95,6 +121,7 @@ Backups on the same server don't protect against losing the server. Copy `/opt/p
 ## If something goes wrong
 
 - **Script stops at the DNS check.** The A record isn't visible yet, or it points at another IP. Wait a few minutes and re-run.
+- **"Port … is already used".** Re-run with `--port` and a free port, or with `--behind-proxy` if it's port 80 or 443. Re-running is safe: your `.env` and data are kept.
 - **Site doesn't load over HTTPS.** Run `docker compose -f docker-compose.yml -f docker-compose.prod.yml logs caddy`. Usually DNS isn't right, or port 80/443 is blocked. Contabo has no external firewall by default, but check the Contabo panel if you added one.
 - **Build is killed or very slow.** The server is low on memory. The script adds 2 GB swap; on the smallest plans, re-run the build.
 - **"Session expired" on every action.** `SECRET_KEY` changed. Sign in again.
@@ -102,9 +129,9 @@ Backups on the same server don't protect against losing the server. Copy `/opt/p
 ## How it fits together on the server
 
 ```
-Internet ──443──▶ Caddy (HTTPS, certificates) ──▶ web (Nginx: website + admin)
+Internet ──443──▶ Caddy, or your existing web server ──▶ web on 127.0.0.1:8095 (website + admin)
                                                     ├── /api/*     ──▶ api (FastAPI)
                                                     └── /uploads/* ──▶ api ──▶ db (PostgreSQL)
 ```
 
-Only ports 22, 80 and 443 are open. The database and API can't be reached from outside.
+Only ports 22, 80 and 443 are opened in the firewall (rules for your other applications are kept). Port 8095, the database and the API can't be reached from outside.
