@@ -43,7 +43,8 @@ def payment_out(p: Payment) -> dict:
 
 
 def order_out(o: Order) -> dict:
-    return {"id": o.id, "number": o.number, "customer": customer_out(o.customer), "model": o.model.name,
+    return {"id": o.id, "number": o.number, "customer": customer_out(o.customer), "model": o.item_name,
+            "kind": o.kind, "battery_serial": o.battery.serial if o.battery else None,
             "model_id": o.model_id, "chassis_no": o.vehicle.chassis_no if o.vehicle else None,
             "vehicle_id": o.vehicle_id, "price": o.price, "discount": o.discount, "final_price": o.final_price,
             "paid": o.paid, "balance": o.balance, "status": o.status, "created_on": d(o.created_on),
@@ -55,7 +56,8 @@ def battery_out(b: Battery, owner: str | None = None) -> dict:
             "chassis_no": b.vehicle.chassis_no if b.vehicle else None, "owner": owner,
             "installed_on": d(b.installed_on), "warranty_months": b.warranty_months,
             "warranty_left": months_left(b.installed_on, b.warranty_months), "health": b.health,
-            "health_label": battery_health_label(b.health), "cycles": b.cycles, "status": b.status}
+            "health_label": battery_health_label(b.health), "cycles": b.cycles, "status": b.status,
+            "cost": b.cost, "price": b.price}
 
 
 def vehicle_out(v: Vehicle, battery: Battery | None = None) -> dict:

@@ -26,7 +26,7 @@ PERMISSIONS: dict[str, list[str] | str] = {
     "admin": "*",
     "manager": ["dash", "reports", "catalog", "leads", "sales", "orders", "payments", "service", "mechanics",
                 "issued", "warranty", "stock", "batteries", "parts", "customers", "remind", "audit"],
-    "sales": ["dash", "leads", "sales", "orders", "stock", "customers", "remind"],
+    "sales": ["dash", "leads", "sales", "orders", "stock", "batteries", "customers", "remind"],
     "svcm": ["dash", "service", "mechanics", "issued", "warranty", "batteries", "parts", "customers", "remind"],
     "tech": ["service", "issued"],
     "acct": ["dash", "reports", "orders", "payments", "parts", "customers", "audit"],

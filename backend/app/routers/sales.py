@@ -75,8 +75,9 @@ def customer_profile(cid: int, db: Session = Depends(get_db), _=Depends(require(
                           "vehicle_id": o.vehicle_id, "battery": battery_out(b) if b else None})
     lead = db.scalar(select(Lead).where(Lead.customer_id == cid).order_by(Lead.id.desc()))
     pays = [p for o in orders for p in o.payments]
+    loose = [battery_out(o.battery) for o in orders if o.kind == "battery" and o.battery]
     jobs = db.scalars(select(ServiceJob).where(ServiceJob.customer_id == cid).order_by(ServiceJob.number)).all()
-    return {"customer": customer_out(c), "bikes": bikes, "orders": [order_out(o) for o in orders],
+    return {"customer": customer_out(c), "bikes": bikes, "batteries": loose, "orders": [order_out(o) for o in orders],
             "payments": [payment_out(p) for p in pays], "jobs": [job_out(j) for j in jobs],
             "lead": lead_out(lead) if lead else None, "balance": sum(max(0, o.balance) for o in orders),
             "total_paid": sum(p.amount for p in pays)}
@@ -168,6 +169,8 @@ def deliver(oid: int, db: Session = Depends(get_db), u=Depends(require("orders")
     o = get_or_404(db, Order, oid, "Order not found")
     if o.status != "booked":
         raise HTTPException(400, "Order already delivered")
+    if o.kind != "bike":
+        raise HTTPException(400, "Only bike orders are delivered here")
     if not o.vehicle_id:
         # try to allocate a bike that has arrived since booking
         v = db.scalar(select(Vehicle).where(Vehicle.model_id == o.model_id, Vehicle.status == "stock"))

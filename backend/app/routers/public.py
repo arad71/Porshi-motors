@@ -24,7 +24,10 @@ def site(db: Session = Depends(get_db)):
                              .group_by(Vehicle.model_id)).all())
     models = db.scalars(select(VehicleModel).where(VehicleModel.visible).order_by(VehicleModel.price)).all()
     parts = db.scalars(select(SparePart).where(SparePart.visible).order_by(SparePart.name)).all()
+    bats = db.execute(select(Battery.type, func.count(), func.min(Battery.price)).where(Battery.status == "spare", Battery.price > 0)
+                      .group_by(Battery.type).order_by(Battery.type)).all()
     return {
+        "batteries": [{"type": t, "available": n, "price_from": p} for t, n, p in bats],
         "settings": {k: cfg[k] for k in ("phone", "whatsapp", "facebook", "address_en", "address_bn", "hours_en",
                                          "hours_bn", "brands", "finance_rate", "offers")},
         "models": [model_out(m, counts.get(m.id, 0)) for m in models],
@@ -67,7 +70,7 @@ def service_booking(body: ServiceBooking, db: Session = Depends(get_db)):
     m = _visible_model(db, body.model_id) if body.model_id else None
     c = _customer(db, body.name, body.phone)
     # attach the customer's own bike if we sold them one
-    o = db.scalar(select(Order).where(Order.customer_id == c.id, Order.status == "delivered"))
+    o = db.scalar(select(Order).where(Order.customer_id == c.id, Order.status == "delivered", Order.vehicle_id.isnot(None)))
     no = next_number(db, "job", 245)
     j = ServiceJob(number=no, customer_id=c.id, vehicle_id=o.vehicle_id if o else None,
                    vehicle_desc=(o.model.name if o else (m.name if m else "")), complaint=body.complaint or "General service",
@@ -137,6 +140,7 @@ def portal_me(c: Customer = Depends(current_customer), db: Session = Depends(get
                       "vehicle_warranty_ends": add_months(o.delivered_on, int(cfg["vehicle_warranty_months"])).isoformat()})
     jobs = db.scalars(select(ServiceJob).where(ServiceJob.customer_id == c.id).order_by(ServiceJob.number.desc())).all()
     pays = [p for o in orders for p in o.payments]
-    return {"customer": {"name": c.name, "phone": c.phone}, "bikes": bikes,
+    loose = [battery_out(o.battery) for o in orders if o.kind == "battery" and o.battery and not o.battery.vehicle_id]
+    return {"customer": {"name": c.name, "phone": c.phone}, "bikes": bikes, "batteries": loose,
             "jobs": [job_out(j) for j in jobs], "payments": [payment_out(p) for p in sorted(pays, key=lambda p: p.number)],
             "balance": sum(max(0, o.balance) for o in orders)}

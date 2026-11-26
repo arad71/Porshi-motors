@@ -59,7 +59,11 @@ function Dashboard({ onOut }) {
         <Kpi label={t('balance')} value={tk(me.balance)} />
       </div>}
       <div className="two">
-        <div>{me.bikes.map(b => (
+        <div>{me.batteries?.length > 0 && (
+          <div className="card" style={{ marginBottom: 16 }}><h3>{t('myBats')}</h3>
+            {me.batteries.map(b => <p key={b.id}><span className="mono">{b.serial}</span> · {b.type} · {dg(b.health)}% · {t('wLeft')}: {b.warranty_left ? `${dg(b.warranty_left)} ${t('mo')}` : t('expired')}</p>)}
+          </div>)}
+          {me.bikes.map(b => (
           <div className="card" key={b.order.id} style={{ marginBottom: 16 }}>
             <h3>{t('myBike')}</h3><div className="bike"><BikePic model={{ image_url: b.image_url, name: b.model }} colour={b.colour} /></div>
             <dl className="specs">

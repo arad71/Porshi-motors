@@ -9,12 +9,12 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
-from ..models import (Battery, InventoryTxn, Lead, Order, ServiceJob, SparePart, Vehicle, VehicleModel,
-                      WarrantyClaim)
-from ..schemas import BatteryCheck, ModelIn, PartIn, TxnIn, VehicleIn
+from ..models import (Battery, Customer, InventoryTxn, Lead, Order, Payment, ServiceJob, SparePart, Vehicle,
+                      VehicleModel, WarrantyClaim)
+from ..schemas import BatteryIn, BatteryPatch, BatterySale, FitBattery, ModelIn, PartIn, TxnIn, VehicleIn
 from ..security import require
-from ..serializers import battery_out, claim_out, customer_out, job_out, model_out, part_out, vehicle_out
-from ..services import TXN_SIGN, add_months, audit, get_or_404, get_settings, months_left
+from ..serializers import battery_out, claim_out, customer_out, job_out, model_out, order_out, part_out, vehicle_out
+from ..services import TXN_SIGN, add_months, audit, get_or_404, get_settings, months_left, next_number, taka
 
 router = APIRouter(prefix="/api", tags=["stock"])
 
@@ -92,17 +92,38 @@ def add_vehicle(body: VehicleIn, db: Session = Depends(get_db), u=Depends(requir
     m = get_or_404(db, VehicleModel, body.model_id, "Model not found")
     if db.scalar(select(Vehicle).where(Vehicle.chassis_no == body.chassis_no)):
         raise HTTPException(409, "Chassis number already registered")
-    if db.scalar(select(Battery).where(Battery.serial == body.battery_serial)):
+    serial = body.battery_serial.strip()
+    if serial and db.scalar(select(Battery).where(Battery.serial == serial)):
         raise HTTPException(409, "Battery serial already registered")
-    data = body.model_dump(exclude={"battery_serial"})
-    v = Vehicle(**data)
+    v = Vehicle(**body.model_dump(exclude={"battery_serial"}))
     db.add(v)
     db.flush()
-    db.add(Battery(serial=body.battery_serial, type=m.battery_spec, vehicle_id=v.id, purchased_on=date.today(),
-                   warranty_months=int(get_settings(db)["battery_warranty_months"]), status="stock"))
-    audit(db, u.name, f"Received {m.name} {v.chassis_no} into stock")
+    if serial:
+        db.add(Battery(serial=serial, type=m.battery_spec, vehicle_id=v.id, purchased_on=date.today(),
+                       warranty_months=int(get_settings(db)["battery_warranty_months"]), status="stock"))
+    audit(db, u.name, f"Received {m.name} {v.chassis_no} into stock" + ("" if serial else " (without battery)"))
     db.commit()
     return vehicle_out(v)
+
+
+@router.post("/vehicles/{vid}/fit-battery")
+def fit_battery(vid: int, body: FitBattery, db: Session = Depends(get_db), u=Depends(require("stock", "batteries"))):
+    """Put a battery from stock into a bike that has none (e.g. a bike delivered without one)."""
+    v = get_or_404(db, Vehicle, vid, "Vehicle not found")
+    if db.scalar(select(Battery).where(Battery.vehicle_id == v.id, Battery.status.in_(["stock", "fitted", "sold"]))):
+        raise HTTPException(400, "This bike already has a battery. Use Replace on the Batteries screen.")
+    b = db.scalar(select(Battery).where(Battery.id == body.battery_id).with_for_update())
+    if not b or b.status != "spare":
+        raise HTTPException(400, "Choose a battery that is in stock")
+    b.vehicle_id = v.id
+    if v.status == "sold":
+        b.status, b.installed_on = "fitted", date.today()
+        b.warranty_months = int(get_settings(db)["battery_warranty_months"])
+    else:
+        b.status = "stock"
+    audit(db, u.name, f"Fitted battery {b.serial} to {v.chassis_no}")
+    db.commit()
+    return battery_out(b)
 
 
 @router.get("/vehicles/{vid}")
@@ -114,7 +135,8 @@ def vehicle_detail(vid: int, db: Session = Depends(get_db), _=Depends(require("s
     jobs = db.scalars(select(ServiceJob).where(ServiceJob.vehicle_id == v.id)).all()
     claims = db.scalars(select(WarrantyClaim).where(WarrantyClaim.vehicle_id == v.id)).all()
     vw = int(cfg["vehicle_warranty_months"])
-    return {**vehicle_out(v, b), "motor_spec": v.model.motor_spec, "battery": battery_out(b) if b else None,
+    return {**vehicle_out(v, b), "motor_spec": v.model.motor_spec, "battery_spec": v.model.battery_spec,
+            "battery": battery_out(b) if b else None,
             "customer": customer_out(o.customer) if o else None, "order_number": o.number if o else None,
             "warranty": {"start": o.delivered_on.isoformat(), "ends": add_months(o.delivered_on, vw).isoformat(),
                          "left": months_left(o.delivered_on, vw)} if o and o.delivered_on else None,
@@ -127,19 +149,76 @@ def vehicle_detail(vid: int, db: Session = Depends(get_db), _=Depends(require("s
 def batteries(db: Session = Depends(get_db), _=Depends(require("batteries"))):
     out = []
     for b in db.scalars(select(Battery).order_by(Battery.status, Battery.serial)).all():
-        owner = None
-        if b.vehicle_id:
-            o = db.scalar(select(Order).where(Order.vehicle_id == b.vehicle_id, Order.status == "delivered"))
-            owner = o.customer.name if o else None
-        out.append(battery_out(b, owner))
+        out.append(battery_out(b, _owner(db, b)))
     return out
 
 
+def _owner(db: Session, b: Battery) -> str | None:
+    o = db.scalar(select(Order).where(Order.battery_id == b.id))
+    if not o and b.vehicle_id:
+        o = db.scalar(select(Order).where(Order.vehicle_id == b.vehicle_id, Order.status == "delivered"))
+    return o.customer.name if o else None
+
+
+@router.post("/batteries")
+def receive_battery(body: BatteryIn, db: Session = Depends(get_db), u=Depends(require("batteries"))):
+    """A battery bought on its own goes into stock as a spare, ready to sell or fit."""
+    serial = body.serial.strip()
+    if db.scalar(select(Battery).where(Battery.serial == serial)):
+        raise HTTPException(409, "Battery serial already registered")
+    wm = body.warranty_months if body.warranty_months is not None else int(get_settings(db)["battery_warranty_months"])
+    b = Battery(serial=serial, type=body.type.strip(), cost=body.cost, price=body.price, warranty_months=wm,
+                purchased_on=date.today(), status="spare")
+    db.add(b)
+    audit(db, u.name, f"Received battery {serial} ({b.type}) into stock")
+    db.commit()
+    return battery_out(b)
+
+
+@router.post("/batteries/{bid}/sell")
+def sell_battery(bid: int, body: BatterySale, db: Session = Depends(get_db), u=Depends(require("batteries"))):
+    """Sell a stock battery on its own. Creates an order (so balance, payments and reminders work) and starts the warranty."""
+    b = db.scalar(select(Battery).where(Battery.id == bid).with_for_update())
+    if not b or b.status != "spare":
+        raise HTTPException(400, "Only a battery in stock can be sold")
+    c = get_or_404(db, Customer, body.customer_id, "Customer not found")
+    if body.discount > body.price or body.paid > body.price - body.discount:
+        raise HTTPException(400, "Discount or payment is more than the price")
+    if body.vehicle_id:
+        mine = db.scalar(select(Order).where(Order.customer_id == c.id, Order.vehicle_id == body.vehicle_id,
+                                             Order.status == "delivered"))
+        if not mine:
+            raise HTTPException(400, "That bike doesn't belong to this customer")
+        if db.scalar(select(Battery).where(Battery.vehicle_id == body.vehicle_id, Battery.status.in_(["fitted", "stock", "sold"]))):
+            raise HTTPException(400, "That bike already has a battery")
+    o = Order(number=next_number(db, "order", 1082), kind="battery", customer_id=c.id, battery_id=b.id,
+              price=body.price, discount=body.discount, status="delivered", delivered_on=date.today())
+    db.add(o)
+    db.flush()
+    if body.paid:
+        db.add(Payment(number=next_number(db, "payment", 5009), order_id=o.id, amount=body.paid, method=body.method,
+                       received_by=u.name))
+    b.installed_on = date.today()
+    b.warranty_months = b.warranty_months or int(get_settings(db)["battery_warranty_months"])
+    b.vehicle_id = body.vehicle_id
+    b.status = "fitted" if body.vehicle_id else "sold"
+    audit(db, u.name, f"Sold battery {b.serial} to {c.name} · order #{o.number} · ৳{taka(body.price - body.discount)}")
+    db.commit()
+    db.refresh(o)
+    return order_out(o)
+
+
 @router.patch("/batteries/{bid}")
-def battery_check(bid: int, body: BatteryCheck, db: Session = Depends(get_db), u=Depends(require("batteries"))):
+def battery_check(bid: int, body: BatteryPatch, db: Session = Depends(get_db), u=Depends(require("batteries"))):
     b = get_or_404(db, Battery, bid, "Battery not found")
-    b.health, b.cycles = body.health, body.cycles
-    audit(db, u.name, f"Health check {b.serial}: {b.health}%, {b.cycles} cycles")
+    if body.health is not None or body.cycles is not None:
+        b.health = b.health if body.health is None else body.health
+        b.cycles = b.cycles if body.cycles is None else body.cycles
+        audit(db, u.name, f"Health check {b.serial}: {b.health}%, {b.cycles} cycles")
+    if body.price is not None or body.cost is not None:
+        b.price = b.price if body.price is None else body.price
+        b.cost = b.cost if body.cost is None else body.cost
+        audit(db, u.name, f"Battery {b.serial} price ৳{taka(b.price)}, cost ৳{taka(b.cost)}")
     db.commit()
     return battery_out(b)
 
@@ -147,16 +226,20 @@ def battery_check(bid: int, body: BatteryCheck, db: Session = Depends(get_db), u
 @router.post("/batteries/{bid}/replace")
 def battery_replace(bid: int, db: Session = Depends(get_db), u=Depends(require("batteries"))):
     b = get_or_404(db, Battery, bid, "Battery not found")
-    if b.status not in ("fitted", "stock") or not b.vehicle_id:
-        raise HTTPException(400, "Only a battery fitted to a bike can be replaced")
+    if b.status not in ("fitted", "stock", "sold"):
+        raise HTTPException(400, "Only a battery in a bike or sold to a customer can be replaced")
     spare = db.scalar(select(Battery).where(Battery.status == "spare", Battery.type == b.type).with_for_update())
     if not spare:
         raise HTTPException(400, "No spare battery of this type")
     spare.vehicle_id, spare.status = b.vehicle_id, b.status
-    spare.installed_on = date.today() if b.status == "fitted" else None
+    spare.installed_on = date.today() if b.status in ("fitted", "sold") else None
     spare.warranty_months = int(get_settings(db)["battery_warranty_months"])
+    sold_with = db.scalar(select(Order).where(Order.battery_id == b.id))
+    if sold_with:
+        sold_with.battery_id = spare.id  # the customer's purchase now points at the new battery
     b.status = "replaced"
-    audit(db, u.name, f"Replaced battery {b.serial} with {spare.serial} on {b.vehicle.chassis_no}")
+    where = b.vehicle.chassis_no if b.vehicle else (sold_with.customer.name if sold_with else "stock")
+    audit(db, u.name, f"Replaced battery {b.serial} with {spare.serial} ({where})")
     db.commit()
     return battery_out(spare)
 

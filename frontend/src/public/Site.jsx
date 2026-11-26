@@ -167,6 +167,15 @@ export default function Site() {
           ))}
         </div></div></section>
 
+      {site.batteries?.length > 0 && (
+        <section className="band" id="batteries" style={{ paddingTop: 0 }}><div className="wrap"><h2>{t('batsSite')}</h2><p>{t('batsSiteP')}</p>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))' }}>
+            {site.batteries.map(b => (
+              <div className="card" key={b.type}><h3>{b.type}</h3><div className="price" style={{ fontSize: 20 }}><span className="note" style={{ fontSize: 14 }}>{t('from')} </span>{tk(b.price_from)}</div>
+                <p style={{ marginTop: 6 }}><Tag kind="ok">{t('spareN').replace('{n}', dg(b.available))}</Tag></p></div>))}
+          </div></div></section>
+      )}
+
       <section className="band" id="about"><div className="wrap two">
         <div>
           <h2>{t('aboutT')}</h2><p style={{ fontSize: 18 }}>{t('aboutP')}</p>

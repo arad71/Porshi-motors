@@ -39,7 +39,7 @@ def dashboard(db: Session = Depends(get_db), _=Depends(require("dash"))):
             "new_customers": db.scalar(select(func.count()).select_from(Customer).where(Customer.created_on == today)),
             "new_leads": sum(1 for l in leads if l.created_on == today),
             "test_rides": sum(1 for l in leads if l.stage == 3),
-            "delivered": sum(1 for o in orders if o.delivered_on == today),
+            "delivered": sum(1 for o in orders if o.delivered_on == today and o.kind == "bike"),
             "parts_revenue": sum(q * p for q, p in counter),
         },
         "open_leads": sum(1 for l in leads if l.stage < 6),
@@ -79,7 +79,7 @@ def _report(db: Session, month: str):
     leads = db.scalars(select(Lead)).all()
     by_model: dict[str, list[int]] = {}
     for o in orders:
-        r = by_model.setdefault(o.model.name, [0, 0])
+        r = by_model.setdefault(o.model.name if o.model else "Batteries", [0, 0])
         r[0] += 1
         r[1] += o.final_price
     owed = {}

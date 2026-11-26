@@ -112,7 +112,7 @@ export function Orders({ me }) {
       <Table rows={orders} cols={[
         [t('order'), o => <>#{dg(o.number)}<br /><span className="note">{fD(o.created_on)}</span></>, 'n'],
         [t('customer'), o => <><b>{o.customer.name}</b><br /><span className="note">{dg(o.customer.phone)}</span></>],
-        [t('model'), o => <>{o.model}<br /><span className="mono">{o.chassis_no || '—'}</span></>],
+        [t('model'), o => <>{o.model}<br /><span className="mono">{o.chassis_no || o.battery_serial || '—'}</span></>],
         [t('final'), o => tk(o.final_price), 'n'], [t('paid'), o => tk(o.paid), 'n'],
         [t('bal'), o => <span style={o.balance > 0 ? { color: 'var(--red)', fontWeight: 700 } : undefined}>{tk(o.balance)}</span>, 'n'],
         [t('status'), o => <><Tag kind={o.status === 'delivered' ? 'ok' : 'amb'}>{tt('ost', o.status)}</Tag> <Tag kind={o.balance > 0 ? '' : 'ok'}>{o.balance > 0 ? t('partial') : t('full')}</Tag></>],
@@ -249,6 +249,9 @@ export function Customers({ me, L }) {
                   <button className="sm" onClick={() => bookService(b)}>{t('bookSvc')}</button>
                 </div>);
             }) : <p className="note">{t('none')}</p>}
+            {prof.batteries?.length > 0 && <><h3 style={{ marginTop: 14 }}>{t('bats')}</h3>
+              {prof.batteries.map(b => { const h = healthKind(b.health); return (
+                <p key={b.id}><span className="mono">{b.serial}</span> · {b.type} · {dg(b.health)}% <Tag kind={h[0]}>{t(h[1])}</Tag> · {t('wLeft')}: {b.warranty_left ? `${dg(b.warranty_left)} ${t('mo')}` : t('expired')}{b.chassis_no ? ` · ${b.chassis_no}` : ''}</p>); })}</>}
             <h3 style={{ marginTop: 14 }}>{t('aOrd')}</h3>
             <Table stack={false} rows={prof.orders} cols={[['#', o => dg(o.number)], [t('model'), o => o.model], [t('status'), o => <Tag kind={o.status === 'delivered' ? 'ok' : 'amb'}>{tt('ost', o.status)}</Tag>],
               [t('final'), o => tk(o.final_price), 'n'], [t('bal'), o => tk(o.balance), 'n']]} />

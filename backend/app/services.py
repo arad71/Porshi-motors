@@ -120,7 +120,7 @@ def due_reminders(db: Session, today: date | None = None) -> list[dict]:
     cfg = get_settings(db)
     out: list[dict] = []
     interval = int(cfg["service_interval_months"]) or 3
-    delivered = db.scalars(select(Order).where(Order.status == "delivered")).all()
+    delivered = db.scalars(select(Order).where(Order.status == "delivered", Order.vehicle_id.isnot(None))).all()
     for o in delivered:
         # service due when today is within 7 days of a service date counted from delivery
         k = 1
@@ -129,10 +129,12 @@ def due_reminders(db: Session, today: date | None = None) -> list[dict]:
         due = add_months(o.delivered_on, interval * k)
         if (due - today).days <= 7:
             out.append({"kind": "svc", "customer": o.customer, "key": f"svc:{o.id}:{due.isoformat()}", "vars": {}})
-    for b in db.scalars(select(Battery).where(Battery.status == "fitted")).all():
+    for b in db.scalars(select(Battery).where(Battery.status.in_(["fitted", "sold"]))).all():
         left = months_left(b.installed_on, b.warranty_months, today)
-        if left is not None and 0 < left <= 3 and b.vehicle:
-            o = db.scalar(select(Order).where(Order.vehicle_id == b.vehicle_id))
+        if left is not None and 0 < left <= 3:
+            o = db.scalar(select(Order).where(Order.battery_id == b.id))
+            if not o and b.vehicle_id:
+                o = db.scalar(select(Order).where(Order.vehicle_id == b.vehicle_id))
             if o:
                 out.append({"kind": "war", "customer": o.customer, "key": f"war:{b.id}:{left}", "vars": {"m": left}})
     for o in db.scalars(select(Order)).all():

@@ -134,15 +134,38 @@ class VehicleIn(BaseModel):
     motor_no: str
     controller_no: str = ""
     charger_no: str = ""
-    battery_serial: str
+    battery_serial: str = ""  # leave empty for a bike that arrives without a battery
     colour: str = ""
     cost: int = Field(default=0, ge=0)
     location: str = Field(default="showroom", pattern="^(showroom|warehouse)$")
 
 
-class BatteryCheck(BaseModel):
-    health: int = Field(ge=0, le=100)
-    cycles: int = Field(ge=0)
+class BatteryPatch(BaseModel):
+    health: int | None = Field(default=None, ge=0, le=100)
+    cycles: int | None = Field(default=None, ge=0)
+    price: int | None = Field(default=None, ge=0)
+    cost: int | None = Field(default=None, ge=0)
+
+
+class BatteryIn(BaseModel):
+    serial: str = Field(min_length=1, max_length=40)
+    type: str = Field(min_length=1, max_length=80)
+    cost: int = Field(default=0, ge=0)
+    price: int = Field(default=0, ge=0)
+    warranty_months: int | None = Field(default=None, ge=0, le=120)
+
+
+class BatterySale(BaseModel):
+    customer_id: int
+    price: int = Field(gt=0)
+    discount: int = Field(default=0, ge=0)
+    paid: int = Field(default=0, ge=0)
+    method: str = Field(default="Cash", pattern="^(Cash|bKash|Nagad|Bank|Card)$")
+    vehicle_id: int | None = None  # fit it to one of the customer's bikes
+
+
+class FitBattery(BaseModel):
+    battery_id: int
 
 
 class PartIn(BaseModel):

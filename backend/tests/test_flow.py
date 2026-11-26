@@ -71,7 +71,7 @@ def test_quotation_order_payment_delivery(client):
     q = client.post("/api/quotations", json={"customer_id": cust["id"], "model_id": 1, "discount": 3000, "advance": 20000}, headers=h).json()
     assert q["final_price"] == 115000 and q["balance"] == 95000
     o = client.post(f"/api/quotations/{q['id']}/convert", headers=h).json()
-    assert o["number"] == 1082 and o["paid"] == 20000 and o["chassis_no"]
+    assert o["number"] == 1083 and o["paid"] == 20000 and o["chassis_no"]
     acct = login(client, ACCT)
     assert client.post("/api/payments", json={"order_id": o["id"], "amount": 999999, "method": "bKash"}, headers=acct).status_code == 400
     p = client.post("/api/payments", json={"order_id": o["id"], "amount": 5000, "method": "bKash"}, headers=acct).json()
@@ -155,6 +155,73 @@ def test_catalogue_settings_staff_reports_audit(client):
     csv = client.get("/api/reports/owed.csv", headers=h)
     assert csv.status_code == 200 and csv.text.startswith("Customer,Phone")
     log = client.get("/api/audit", headers=h).json()
-    assert any("Delivered order #1082" in e["action"] for e in log["entries"])
+    assert any("Delivered order #1083" in e["action"] for e in log["entries"])
     dash = client.get("/api/dashboard", headers=h).json()
     assert dash["today"]["collections"] >= 15000 and dash["today"]["new_leads"] >= 2
+
+
+def test_batteries_sold_and_stocked_separately(client):
+    h = login(client, SALES)  # salespeople can sell batteries
+    site = client.get("/api/public/site").json()
+    assert {b["type"] for b in site["batteries"]} >= {"60V 30Ah Li-ion", "72V 40Ah Li-ion"}
+    r = client.post("/api/batteries", json={"serial": "BT48-30001", "type": "48V 24Ah Li-ion", "cost": 17000, "price": 22500}, headers=h)
+    assert r.status_code == 200 and r.json()["status"] == "spare" and r.json()["price"] == 22500
+    assert client.post("/api/batteries", json={"serial": "BT48-30001", "type": "x"}, headers=h).status_code == 409
+    bid = r.json()["id"]
+    cust = client.get("/api/customers?q=Jahid", headers=h).json()[0]
+    assert client.post(f"/api/batteries/{bid}/sell", json={"customer_id": cust["id"], "price": 22500, "paid": 99999}, headers=h).status_code == 400
+    o = client.post(f"/api/batteries/{bid}/sell", json={"customer_id": cust["id"], "price": 22500, "discount": 500, "paid": 12000, "method": "bKash"}, headers=h).json()
+    assert o["kind"] == "battery" and o["model"] == "Battery 48V 24Ah Li-ion" and o["balance"] == 10000 and o["status"] == "delivered"
+    assert client.post(f"/api/batteries/{bid}/sell", json={"customer_id": cust["id"], "price": 1}, headers=h).status_code == 400
+    b = next(x for x in client.get("/api/batteries", headers=h).json() if x["serial"] == "BT48-30001")
+    assert b["status"] == "sold" and b["owner"] == "Jahid Hasan" and b["warranty_left"] == 24
+    prof = client.get(f"/api/customers/{cust['id']}", headers=login(client, ADMIN)).json()
+    assert prof["batteries"][0]["serial"] == "BT48-30001" and prof["balance"] == 10000
+    rem = client.get("/api/reminders", headers=h).json()
+    assert any(r["kind"] == "pay" and r["phone"] == cust["phone"] for r in rem)
+    # pay off the balance like any order
+    assert client.post("/api/payments", json={"order_id": o["id"], "amount": 10000, "method": "Cash"}, headers=login(client, ACCT)).json()["balance_after"] == 0
+    # it cannot be "delivered" again like a bike
+    assert client.post(f"/api/orders/{o['id']}/deliver", headers=h).status_code == 400
+
+
+def test_bike_without_battery_then_fit(client):
+    h = login(client, ADMIN)
+    v = client.post("/api/vehicles", json={"model_id": 1, "chassis_no": "PM-MG-24-0400", "motor_no": "MT05-20000"}, headers=h).json()
+    assert v["battery_serial"] is None
+    assert next(x for x in client.get("/api/vehicles", headers=h).json() if x["chassis_no"] == "PM-MG-24-0400")["battery_serial"] is None
+    spare = next(x for x in client.get("/api/batteries", headers=h).json() if x["status"] == "spare" and x["type"].startswith("48V"))
+    r = client.post(f"/api/vehicles/{v['id']}/fit-battery", json={"battery_id": spare["id"]}, headers=h).json()
+    assert r["status"] == "stock" and r["chassis_no"] == "PM-MG-24-0400"
+    assert client.post(f"/api/vehicles/{v['id']}/fit-battery", json={"battery_id": spare["id"]}, headers=h).status_code == 400
+    # the seeded Cargo Pro arrived without a battery too
+    cp = next(x for x in client.get("/api/vehicles", headers=h).json() if x["chassis_no"] == "PM-CP-24-0011")
+    assert cp["battery_serial"] is None
+
+
+def test_replace_a_battery_sold_on_its_own(client):
+    h = login(client, ADMIN)
+    b = next(x for x in client.get("/api/batteries", headers=h).json() if x["serial"] == "BT72-71095")
+    assert b["owner"] == "Monir Hossain" and b["status"] == "sold"
+    new = client.post(f"/api/batteries/{b['id']}/replace", headers=h).json()
+    assert new["status"] == "sold"
+    assert next(x for x in client.get("/api/batteries", headers=h).json() if x["id"] == new["id"])["owner"] == "Monir Hossain"
+    orders = client.get("/api/orders", headers=h).json()
+    assert next(o for o in orders if o["number"] == 1082)["battery_serial"] == new["serial"]
+    assert client.get("/api/reports", headers=h).json()["by_model"]  # battery orders don't break reports
+    assert client.get("/api/warranty", headers=h).status_code == 200
+
+
+def test_upgrade_older_database(client):
+    """An install from the first version has no battery price or order kind columns; upgrade() adds them."""
+    from sqlalchemy import inspect, text
+    from app.migrate import upgrade
+    with engine.begin() as c:
+        c.execute(text("ALTER TABLE orders DROP COLUMN kind"))
+        c.execute(text("ALTER TABLE orders DROP COLUMN battery_id"))
+        c.execute(text("ALTER TABLE batteries DROP COLUMN price"))
+    upgrade()
+    upgrade()  # safe to run twice
+    cols = {c["name"] for c in inspect(engine).get_columns("orders")}
+    assert {"kind", "battery_id"} <= cols
+    assert "price" in {c["name"] for c in inspect(engine).get_columns("batteries")}

@@ -77,7 +77,11 @@ class Battery(Base):
     warranty_months: Mapped[int] = mapped_column(Integer, default=24)
     health: Mapped[int] = mapped_column(Integer, default=100)
     cycles: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(20), default="stock")  # stock(in unsold bike) | fitted | spare | replaced
+    # stock = in an unsold bike, fitted = in a customer's bike, spare = loose in stock,
+    # sold = sold on its own to a customer, replaced = taken out under warranty
+    status: Mapped[str] = mapped_column(String(20), default="stock")
+    cost: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    price: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # selling price when sold on its own
     vehicle: Mapped[Vehicle | None] = relationship()
 
 
@@ -125,8 +129,10 @@ class Order(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     number: Mapped[int] = mapped_column(Integer, unique=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
-    model_id: Mapped[int] = mapped_column(ForeignKey("vehicle_models.id"))
+    kind: Mapped[str] = mapped_column(String(10), default="bike", server_default="bike")  # bike | battery
+    model_id: Mapped[int | None] = mapped_column(ForeignKey("vehicle_models.id"), nullable=True)
     vehicle_id: Mapped[int | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
+    battery_id: Mapped[int | None] = mapped_column(ForeignKey("batteries.id"), nullable=True)
     quotation_id: Mapped[int | None] = mapped_column(ForeignKey("quotations.id"), nullable=True)
     price: Mapped[int] = mapped_column(Integer)
     discount: Mapped[int] = mapped_column(Integer, default=0)
@@ -134,9 +140,16 @@ class Order(Base):
     created_on: Mapped[date] = mapped_column(Date, default=date.today)
     delivered_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     customer: Mapped[Customer] = relationship()
-    model: Mapped[VehicleModel] = relationship()
+    model: Mapped[VehicleModel | None] = relationship()
     vehicle: Mapped[Vehicle | None] = relationship()
+    battery: Mapped["Battery | None"] = relationship()
     payments: Mapped[list["Payment"]] = relationship(back_populates="order")
+
+    @property
+    def item_name(self) -> str:
+        if self.kind == "battery":
+            return f"Battery {self.battery.type}" if self.battery else "Battery"
+        return self.model.name if self.model else ""
 
     @property
     def final_price(self) -> int:

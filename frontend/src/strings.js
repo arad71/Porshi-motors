@@ -1426,6 +1426,10 @@ const T = {
 "replaced": [
 "Replaced",
 "বদলানো হয়েছে"
+],
+"sold": [
+"Sold to customer",
+"গ্রাহকের কাছে বিক্রি"
 ]
 },
 "check": [
@@ -1627,6 +1631,90 @@ const T = {
 "sampleNote": [
 "Sample data for demonstration. Replace it with real records before going live.",
 "প্রদর্শনের জন্য নমুনা তথ্য। চালুর আগে আসল তথ্য দিয়ে বদলে নিন।"
+],
+"recvBat": [
+"Receive battery",
+"ব্যাটারি গ্রহণ"
+],
+"sellBat": [
+"Sell",
+"বিক্রি"
+],
+"sellBatT": [
+"Sell battery",
+"ব্যাটারি বিক্রি"
+],
+"paidNow": [
+"Paid now",
+"এখন পরিশোধ"
+],
+"fitTo": [
+"Fit to customer's bike",
+"গ্রাহকের বাইকে লাগান"
+],
+"notFitted": [
+"Not fitted (sold loose)",
+"লাগানো নয় (আলাদা বিক্রি)"
+],
+"batSold": [
+"Battery sold. Order #{n} created.",
+"ব্যাটারি বিক্রি হয়েছে। অর্ডার #{n} তৈরি।"
+],
+"batRecv": [
+"Battery added to stock.",
+"ব্যাটারি স্টকে যোগ হয়েছে।"
+],
+"fitBat": [
+"Fit battery",
+"ব্যাটারি লাগান"
+],
+"fitOk": [
+"Battery fitted.",
+"ব্যাটারি লাগানো হয়েছে।"
+],
+"noBat": [
+"No battery",
+"ব্যাটারি নেই"
+],
+"optional": [
+"optional",
+"ঐচ্ছিক"
+],
+"inStockBats": [
+"Batteries in stock",
+"স্টকে ব্যাটারি"
+],
+"batsSite": [
+"Batteries",
+"ব্যাটারি"
+],
+"batsSiteP": [
+"Replacement and spare batteries, with warranty. Ask in the showroom or send an enquiry.",
+"প্রতিস্থাপন ও অতিরিক্ত ব্যাটারি, ওয়ারেন্টিসহ। শোরুমে জিজ্ঞেস করুন বা অনুসন্ধান পাঠান।"
+],
+"from": [
+"from",
+"থেকে"
+],
+"available": [
+"available",
+"পাওয়া যাচ্ছে"
+],
+"myBats": [
+"My batteries",
+"আমার ব্যাটারি"
+],
+"bats": [
+"Batteries",
+"ব্যাটারি"
+],
+"spareN": [
+"{n} in stock",
+"স্টকে {n}টি"
+],
+"priceCost": [
+"Price and cost",
+"দাম ও ক্রয়মূল্য"
 ]
 };
 export default T;

@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { api, BikePic, Table, Tag, healthKind, useAction, useApi, useLang } from '../lib.jsx';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api, BikePic, Table, Tag, healthKind, useAction, useApi, useLang, useToast } from '../lib.jsx';
 
 const BLANK_MODEL = { code: '', name: '', price: '', range_km: '', top_speed: '', battery_spec: '', motor_spec: '', charge_hours: '', colours: ['#e5361b', '#1a2b6d', '#d9d9d9'], image_url: '', visible: true };
 const BLANK_PART = { name: '', name_bn: '', price: '', stock: 0, min_stock: 0, visible: true };
@@ -110,14 +111,16 @@ export function Catalog({ L }) {
   );
 }
 
-export function Vehicles({ L }) {
+export function Vehicles({ me }) {
   const { t, tt, dg, tk, fD } = useLang();
   const act = useAction();
   const [vs, reload] = useApi('/vehicles');
   const [models] = useApi('/models');
+  const [bats, reloadB] = useApi(me.areas.includes('batteries') ? '/batteries' : null);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(null);
-  const [det] = useApi(sel ? `/vehicles/${sel}` : null);
+  const [det, reloadD] = useApi(sel ? `/vehicles/${sel}` : null);
+  const [fit, setFit] = useState('');
   const [add, setAdd] = useState(null);
   if (!vs || !models) return <p>{t('loading')}</p>;
   const f = vs.filter(v => !q || `${v.model}${v.chassis_no}${v.battery_serial}${v.motor_no}`.toLowerCase().includes(q.toLowerCase()));
@@ -136,7 +139,7 @@ export function Vehicles({ L }) {
         <form className="card form" noValidate onSubmit={receive} style={{ marginBottom: 16 }}>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
             <div><label htmlFor="vM">{t('model')}</label><select id="vM" value={add.model_id} onChange={e => setAdd({ ...add, model_id: e.target.value })}>{models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
-            {af('chassis_no', t('chassis'))}{af('motor_no', t('motorNo'))}{af('battery_serial', t('battNo'))}{af('controller_no', t('ctrl'))}{af('charger_no', t('chgr'))}
+            {af('chassis_no', t('chassis'))}{af('motor_no', t('motorNo'))}{af('battery_serial', `${t('battNo')} (${t('optional')})`)}{af('controller_no', t('ctrl'))}{af('charger_no', t('chgr'))}
             <div><label htmlFor="vC">{t('colour')}</label><input id="vC" type="color" value={add.colour || '#999999'} onChange={e => setAdd({ ...add, colour: e.target.value })} /></div>
             <div><label htmlFor="vK">{t('cost')} (৳)</label><input id="vK" type="number" min="0" value={add.cost} onChange={e => setAdd({ ...add, cost: e.target.value })} /></div>
             <div><label htmlFor="vL">{t('loc')}</label><select id="vL" value={add.location} onChange={e => setAdd({ ...add, location: e.target.value })}><option value="showroom">{t('showroom')}</option><option value="warehouse">{t('store')}</option></select></div>
@@ -152,7 +155,15 @@ export function Vehicles({ L }) {
           <ul className="tree">
             {li(t('motor'), <><span className="mono">{det.motor_no}</span> · {det.motor_spec}</>)}
             {li(t('ctrl'), <span className="mono">{det.controller_no}</span>)}
-            {li(t('battery'), det.battery ? <><span className="mono">{det.battery.serial}</span> · {det.battery.type} · {dg(det.battery.health)}%</> : '—')}
+            {li(t('battery'), det.battery ? <><span className="mono">{det.battery.serial}</span> · {det.battery.type} · {dg(det.battery.health)}%</> : (
+              <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}><Tag kind="warn">{t('noBat')}</Tag>
+                {bats && bats.some(x => x.status === 'spare') && <>
+                  <select aria-label={t('fitBat')} value={fit} onChange={e => setFit(e.target.value)} style={{ width: 'auto' }}>
+                    <option value="">—</option>
+                    <optgroup label={det.battery_spec}>{bats.filter(x => x.status === 'spare' && x.type === det.battery_spec).map(x => <option key={x.id} value={x.id}>{x.serial} · {x.type}</option>)}</optgroup>
+                    <optgroup label="⚠ other types">{bats.filter(x => x.status === 'spare' && x.type !== det.battery_spec).map(x => <option key={x.id} value={x.id}>{x.serial} · {x.type}</option>)}</optgroup></select>
+                  <button className="sm pri" disabled={!fit} onClick={async () => { if (await act(() => api(`/vehicles/${det.id}/fit-battery`, { method: 'POST', body: { battery_id: +fit } }), t('fitOk'))) { setFit(''); reload(); reloadB(); reloadD(); } }}>{t('fitBat')}</button>
+                </>}</span>))}
             {li(t('chgr'), <span className="mono">{det.charger_no}</span>)}
             {li(t('aWar'), det.warranty ? `${t('vWar')}: ${fD(det.warranty.start)} → ${fD(det.warranty.ends)} · ${t('battery')}: ${det.battery?.warranty_left != null ? dg(det.battery.warranty_left) + ' ' + t('mo') : '—'}` : t('notStarted'))}
             {li(t('history'), det.jobs.length ? det.jobs.map(j => `#${dg(j.number)} ${j.complaint}`).join(' · ') : t('none'))}
@@ -162,7 +173,7 @@ export function Vehicles({ L }) {
       )}
       <Table rows={f} rowClass={v => (v.id === sel ? 'hl' : '')} cols={[
         [t('model'), v => <><span className="sw" style={{ background: v.colour }} /> <b>{v.model}</b></>], [t('chassis'), v => <span className="mono">{v.chassis_no}</span>],
-        [t('motorNo'), v => <span className="mono">{v.motor_no}</span>], [t('battNo'), v => <span className="mono">{v.battery_serial || '—'}</span>],
+        [t('motorNo'), v => <span className="mono">{v.motor_no}</span>], [t('battNo'), v => (v.battery_serial ? <span className="mono">{v.battery_serial}</span> : <Tag kind="warn">{t('noBat')}</Tag>)],
         [t('loc'), v => (v.location === 'warehouse' ? t('store') : t('showroom'))], [t('cost'), v => tk(v.cost), 'n'], [t('sell'), v => tk(v.price), 'n'], [t('margin'), v => tk(v.margin), 'n'],
         [t('status'), v => <Tag kind={cls[v.status]}>{tt('st', v.status)}</Tag>], ['', v => <button className="sm" onClick={() => setSel(v.id)}>{t('details')}</button>],
       ]} />
@@ -170,40 +181,120 @@ export function Vehicles({ L }) {
   );
 }
 
-export function Batteries() {
-  const { t, tt, dg, fD } = useLang();
+const METHODS = ['Cash', 'bKash', 'Nagad', 'Bank', 'Card'];
+
+function SellBattery({ b, onDone, onCancel }) {
+  const { t, tk } = useLang();
   const act = useAction();
+  const [custs] = useApi('/customers');
+  const [f, setF] = useState({ customer_id: '', price: b.price || '', discount: 0, paid: 0, method: 'Cash', vehicle_id: '' });
+  const [prof] = useApi(f.customer_id ? `/customers/${f.customer_id}` : null);
+  useEffect(() => { if (custs?.length && !f.customer_id) setF(x => ({ ...x, customer_id: custs[0].id })); }, [custs]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!custs) return null;
+  const bikes = (prof?.bikes || []).filter(x => !x.battery);
+  const final = (+f.price || 0) - (+f.discount || 0);
+  const submit = async e => {
+    e.preventDefault();
+    const body = { customer_id: +f.customer_id, price: +f.price, discount: +f.discount || 0, paid: +f.paid || 0, method: f.method, vehicle_id: f.vehicle_id ? +f.vehicle_id : null };
+    const o = await act(() => api(`/batteries/${b.id}/sell`, { method: 'POST', body }));
+    if (o) onDone(o);
+  };
+  const set = k => e => setF({ ...f, [k]: e.target.value });
+  return (
+    <form className="jc form" noValidate onSubmit={submit} style={{ marginBottom: 18 }}>
+      <h3><span>{t('sellBatT')} · <span className="mono" style={{ fontSize: 16 }}>{b.serial}</span></span><span>{b.type}</span></h3>
+      <div className="fr">
+        <div><label htmlFor="bsC">{t('customer')}</label><select id="bsC" value={f.customer_id} onChange={e => setF({ ...f, customer_id: e.target.value, vehicle_id: '' })}>{custs.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone}</option>)}</select></div>
+        <div><label htmlFor="bsV">{t('fitTo')}</label><select id="bsV" value={f.vehicle_id} onChange={set('vehicle_id')}><option value="">{t('notFitted')}</option>{bikes.map(x => <option key={x.vehicle_id} value={x.vehicle_id}>{x.model} · {x.chassis_no}</option>)}</select></div>
+      </div>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
+        <div><label htmlFor="bsP">{t('sell')} (৳)</label><input id="bsP" type="number" min="1" value={f.price} onChange={set('price')} /></div>
+        <div><label htmlFor="bsD">{t('discount')} (৳)</label><input id="bsD" type="number" min="0" value={f.discount} onChange={set('discount')} /></div>
+        <div><label htmlFor="bsA">{t('paidNow')} (৳)</label><input id="bsA" type="number" min="0" value={f.paid} onChange={set('paid')} /></div>
+        <div><label htmlFor="bsM">{t('method')}</label><select id="bsM" value={f.method} onChange={set('method')}>{METHODS.map(m => <option key={m}>{m}</option>)}</select></div>
+      </div>
+      <div className="rows"><span>{t('final')}</span><b>{tk(final)}</b><span>{t('bal')}</span><b style={{ color: 'var(--red)' }}>{tk(final - (+f.paid || 0))}</b></div>
+      <div style={{ display: 'flex', gap: 8 }}><button className="pri">{t('sellBatT')}</button><button type="button" onClick={onCancel}>{t('cancel')}</button></div>
+    </form>
+  );
+}
+
+export function Batteries({ me }) {
+  const { t, tt, dg, tk, fD } = useLang();
+  const act = useAction();
+  const toast = useToast();
+  const nav = useNavigate();
   const [bs, reload] = useApi('/batteries');
+  const [models] = useApi('/models');
   const [sel, setSel] = useState(null);
-  const [chk, setChk] = useState({ health: 0, cycles: 0 });
-  if (!bs) return <p>{t('loading')}</p>;
+  const [mode, setMode] = useState(null); // check | sell | recv
+  const [chk, setChk] = useState({ health: 0, cycles: 0, price: 0, cost: 0 });
+  const [rc, setRc] = useState({ serial: '', type: '', cost: '', price: '', warranty_months: '' });
+  const [filter, setFilter] = useState('');
+  if (!bs || !models) return <p>{t('loading')}</p>;
   const b = bs.find(x => x.id === sel);
+  const types = [...new Set([...bs.map(x => x.type), ...models.map(m => m.battery_spec)].filter(Boolean))].sort();
+  const spares = bs.filter(x => x.status === 'spare');
+  const byType = types.map(ty => [ty, spares.filter(x => x.type === ty).length]).filter(x => x[1]);
   const wl = x => (x.warranty_left == null ? t('notStarted') : x.warranty_left === 0 ? <Tag kind="warn">{t('expired')}</Tag> : `${dg(x.warranty_left)} ${t('mo')}`);
-  const open = x => { setSel(x.id); setChk({ health: x.health, cycles: x.cycles }); };
+  const open = (x, m = 'check') => { setSel(x.id); setMode(m); setChk({ health: x.health, cycles: x.cycles, price: x.price, cost: x.cost }); };
+  const close = () => { setSel(null); setMode(null); };
+  const shown = filter ? bs.filter(x => x.status === filter) : bs;
+  const receive = async e => {
+    e.preventDefault();
+    const body = { ...rc, cost: +rc.cost || 0, price: +rc.price || 0, warranty_months: rc.warranty_months === '' ? null : +rc.warranty_months };
+    if (await act(() => api('/batteries', { method: 'POST', body }), t('batRecv'))) { setRc({ ...rc, serial: '' }); reload(); }
+  };
   return (
     <>
-      <h1>{t('aBat')}</h1><p>{t('batP')}</p>
-      {b && (
-        <form className="jc form" noValidate style={{ marginBottom: 18 }} onSubmit={async e => { e.preventDefault(); if (await act(() => api(`/batteries/${b.id}`, { method: 'PATCH', body: { health: +chk.health, cycles: +chk.cycles } }), t('chkOk'))) reload(); }}>
+      <div className="who"><h1 style={{ margin: 0 }}>{t('aBat')}</h1><button className="pri" onClick={() => { close(); setMode(mode === 'recv' ? null : 'recv'); setRc(r => ({ ...r, type: r.type || types[0] || '' })); }}>+ {t('recvBat')}</button></div>
+      <p>{t('batP')}</p>
+      {byType.length > 0 && <p>{t('inStockBats')}: {byType.map(([ty, n]) => <Tag key={ty} kind="ok">{ty} · {dg(n)}</Tag>).reduce((a, x) => [...a, ' ', x], [])}</p>}
+      {mode === 'recv' && (
+        <form className="card form" noValidate onSubmit={receive} style={{ marginBottom: 18 }}>
+          <h3>{t('recvBat')}</h3>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 12 }}>
+            <div><label htmlFor="rbS">{t('serial')}</label><input id="rbS" value={rc.serial} onChange={e => setRc({ ...rc, serial: e.target.value })} /></div>
+            <div><label htmlFor="rbT">{t('type')}</label><input id="rbT" list="batTypes" value={rc.type} onChange={e => setRc({ ...rc, type: e.target.value })} placeholder="60V 30Ah Li-ion" />
+              <datalist id="batTypes">{types.map(x => <option key={x} value={x} />)}</datalist></div>
+            <div><label htmlFor="rbC">{t('cost')} (৳)</label><input id="rbC" type="number" min="0" value={rc.cost} onChange={e => setRc({ ...rc, cost: e.target.value })} /></div>
+            <div><label htmlFor="rbP">{t('sell')} (৳)</label><input id="rbP" type="number" min="0" value={rc.price} onChange={e => setRc({ ...rc, price: e.target.value })} /></div>
+            <div><label htmlFor="rbW">{t('bwm')} ({t('optional')})</label><input id="rbW" type="number" min="0" value={rc.warranty_months} onChange={e => setRc({ ...rc, warranty_months: e.target.value })} /></div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}><button className="pri">{t('save')}</button><button type="button" onClick={() => setMode(null)}>{t('cancel')}</button></div>
+        </form>
+      )}
+      {b && mode === 'sell' && <SellBattery b={b} onCancel={close} onDone={o => { toast(t('batSold').replace('{n}', dg(o.number))); close(); reload(); if (o.balance > 0 && me.areas.includes('payments')) nav(`/admin/payments?order=${o.id}`); }} />}
+      {b && mode === 'check' && (
+        <form className="jc form" noValidate style={{ marginBottom: 18 }} onSubmit={async e => { e.preventDefault(); if (await act(() => api(`/batteries/${b.id}`, { method: 'PATCH', body: { health: +chk.health, cycles: +chk.cycles, price: +chk.price, cost: +chk.cost } }), t('chkOk'))) reload(); }}>
           <h3><span className="mono" style={{ fontSize: 16 }}>{b.serial}</span><span>{b.type}</span></h3>
-          <p>{b.chassis_no ? <><span className="mono">{b.chassis_no}</span> {b.owner}</> : tt('bst', b.status)}</p>
-          <div className="fr">
+          <p>{b.chassis_no ? <><span className="mono">{b.chassis_no}</span> {b.owner}</> : <>{tt('bst', b.status)}{b.owner ? ` · ${b.owner}` : ''}</>}</p>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12 }}>
             <div><label htmlFor="bH">{t('health')} (%)</label><input id="bH" type="number" min="0" max="100" value={chk.health} onChange={e => setChk({ ...chk, health: e.target.value })} /></div>
             <div><label htmlFor="bC">{t('cycles')}</label><input id="bC" type="number" min="0" value={chk.cycles} onChange={e => setChk({ ...chk, cycles: e.target.value })} /></div>
+            <div><label htmlFor="bP">{t('sell')} (৳)</label><input id="bP" type="number" min="0" value={chk.price} onChange={e => setChk({ ...chk, price: e.target.value })} /></div>
+            <div><label htmlFor="bK">{t('cost')} (৳)</label><input id="bK" type="number" min="0" value={chk.cost} onChange={e => setChk({ ...chk, cost: e.target.value })} /></div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="pri">{t('check')}</button>
-            {(b.status === 'fitted' || b.status === 'stock') && <button type="button" onClick={async () => { const r = await act(() => api(`/batteries/${b.id}/replace`, { method: 'POST' }), t('repOk')); if (r) { reload(); open(r); } }}>{t('replace')}</button>}
-            <button type="button" onClick={() => setSel(null)}>{t('cancel')}</button>
+            <button className="pri">{t('save')}</button>
+            {['fitted', 'stock', 'sold'].includes(b.status) && <button type="button" onClick={async () => { const r = await act(() => api(`/batteries/${b.id}/replace`, { method: 'POST' }), t('repOk')); if (r) { reload(); open(r); } }}>{t('replace')}</button>}
+            <button type="button" onClick={close}>{t('cancel')}</button>
           </div>
         </form>
       )}
-      <Table rows={bs} rowClass={x => (x.id === sel ? 'hl' : '')} cols={[
+      <div className="tabs">
+        {[['', t('allU')], ['spare', tt('bst', 'spare')], ['stock', tt('bst', 'stock')], ['fitted', tt('bst', 'fitted')], ['sold', tt('bst', 'sold')], ['replaced', tt('bst', 'replaced')]].map(([k, l]) => (
+          <button key={k} aria-pressed={filter === k} onClick={() => setFilter(k)}>{l} ({dg(k ? bs.filter(x => x.status === k).length : bs.length)})</button>))}
+      </div>
+      <Table rows={shown} rowClass={x => (x.id === sel ? 'hl' : '')} cols={[
         [t('serial'), x => <span className="mono">{x.serial}</span>], [t('type'), x => x.type],
-        [t('fitted'), x => (x.chassis_no ? <><span className="mono">{x.chassis_no}</span><br />{x.owner}</> : '—')], [t('inst'), x => fD(x.installed_on)],
+        [t('fitted'), x => (x.chassis_no ? <><span className="mono">{x.chassis_no}</span><br />{x.owner}</> : x.owner || '—')], [t('inst'), x => fD(x.installed_on)],
         [t('health'), x => { const h = healthKind(x.health); return <><div className="meter"><i style={{ width: `${x.health}%`, background: `var(--${h[0] === 'ok' ? 'ok' : h[0] === 'amb' ? 'amb' : 'warn'})` }} /></div>{dg(x.health)}% <Tag kind={h[0]}>{t(h[1])}</Tag></>; }],
-        [t('cycles'), x => dg(x.cycles), 'n'], [t('wLeft'), x => (x.status === 'replaced' ? '—' : wl(x))], [t('status'), x => tt('bst', x.status)],
-        ['', x => x.status !== 'replaced' && <button className="sm" onClick={() => open(x)}>{t('check')}</button>],
+        [t('cycles'), x => dg(x.cycles), 'n'], [t('sell'), x => (x.price ? tk(x.price) : '—'), 'n'], [t('wLeft'), x => (x.status === 'replaced' || x.status === 'spare' ? '—' : wl(x))], [t('status'), x => tt('bst', x.status)],
+        ['', x => <div className="acts">
+          {x.status === 'spare' && <button className="sm pri" onClick={() => open(x, 'sell')}>{t('sellBat')}</button>}
+          {x.status !== 'replaced' && <button className="sm" onClick={() => open(x)}>{t('check')}</button>}
+        </div>],
       ]} />
     </>
   );

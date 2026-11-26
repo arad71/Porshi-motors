@@ -74,7 +74,10 @@ See **[DEPLOY.md](DEPLOY.md)**. One script sets up the server, HTTPS, firewall a
 * Quotation → **Create order** reserves a bike from stock and records the advance as a payment.
 * **Deliver** marks the bike sold, starts the battery warranty, moves the lead to Sold.
 * Parts issued on a job card reduce stock and appear in the parts ledger (opening, purchased, sold, used in service, returned, damaged).
-* Battery replacement moves a spare onto the bike and restarts its warranty.
+* Batteries are stock items in their own right. Bikes can arrive with or without one; loose batteries are received under **Batteries → Receive battery** with their own cost and selling price.
+* **Sell** on a stock battery creates a battery order (payments, balance, reminders and portal work as for bikes) and starts its warranty. It can be fitted to one of the customer's bikes at the same time, or sold loose.
+* A bike without a battery shows "No battery"; **Bikes → Details → Fit battery** puts one from stock in it (matching type listed first).
+* Battery replacement moves a spare onto the bike (or onto the customer's loose purchase) and restarts its warranty.
 * Reminders are worked out from the data every time: service due (from the service interval), battery warranty ending within 3 months, and balances due. Each is sent once.
 * Every change is written to the audit log with who made it.
 
@@ -117,9 +120,19 @@ frontend/src/
   strings.js      all Bangla / English text
 ```
 
+## Adding stock
+
+| What | Where | Notes |
+|---|---|---|
+| A new bike model | Website catalogue → Bike models → + Add model | Price, specs, colours, photo |
+| A bike | Stock → Bikes → + Receive bike into stock | Chassis, motor, controller, charger numbers; battery serial only if it came with one |
+| A loose battery | Stock → Batteries → + Receive battery | Serial, type, cost, selling price |
+| A new spare part | Website catalogue → Parts and accessories → + Add item | Opening quantity and minimum level |
+| Purchases, counter sales, returns, damage | Stock → Spare parts → Record a stock movement | Parts used on job cards are recorded automatically |
+
 ## Notes and next steps
 
-* Tables are created automatically on start. Before changing the database layout on a live system, add Alembic migrations.
+* Tables are created automatically on start, and `app/migrate.py` adds columns introduced by later versions to an existing database (safe to re-run). For bigger layout changes, move to Alembic migrations.
 * Money is stored as whole taka. Dates use the server's date; set the server time zone to Asia/Dhaka.
 * Uploaded model photos are kept in the `uploads` Docker volume; include it in backups.
 * The sample models, prices, customers and phone numbers are invented. Replace them before launch.

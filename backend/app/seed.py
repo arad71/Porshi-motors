@@ -71,8 +71,17 @@ def seed(db: Session) -> bool:
                                  warranty_months=24, status="stock")
         db.add(V[ch]._battery)
     V["PM-C60-24-0121"].registration = "KU-LA 11-2034"
-    db.add(Battery(serial="BT60-56001", type="60V 30Ah Li-ion", status="spare", purchased_on=ago(60)))
-    db.add(Battery(serial="BT72-71090", type="72V 40Ah Li-ion", status="spare", purchased_on=ago(60)))
+    for serial, typ, cost, price in [("BT60-56001", "60V 30Ah Li-ion", 27000, 34000), ("BT60-56002", "60V 30Ah Li-ion", 27000, 34000),
+                                     ("BT72-71090", "72V 40Ah Li-ion", 36000, 45000), ("BT48-21100", "48V 24Ah Li-ion", 17500, 22000)]:
+        db.add(Battery(serial=serial, type=typ, cost=cost, price=price, status="spare", purchased_on=ago(60)))
+    # a bike that arrived without a battery
+    nb = Vehicle(model_id=M["cp"].id, chassis_no="PM-CP-24-0011", motor_no="MT20-00760", controller_no="CT41500",
+                 charger_no="CH72700", colour="#2f5d3a", cost=112000, location="warehouse", status="stock")
+    db.add(nb)
+    # a battery sold on its own, for a bike bought elsewhere
+    sold_bat = Battery(serial="BT72-71095", type="72V 40Ah Li-ion", cost=36000, price=45000, status="sold",
+                       purchased_on=ago(90), installed_on=ago(40), warranty_months=24, health=97, cycles=35)
+    db.add(sold_bat)
 
     C = {}
     for n, p, a, src, days in [
@@ -100,6 +109,10 @@ def seed(db: Session) -> bool:
             b = V[ch]._battery
             b.status, b.installed_on = "fitted", delivered
     db.flush()
+    O[1082] = Order(number=1082, kind="battery", customer_id=C["Monir Hossain"].id, battery_id=sold_bat.id, price=45000,
+                    discount=1000, status="delivered", created_on=ago(40), delivered_on=ago(40))
+    db.add(O[1082])
+    db.flush()
     V["PM-R90-24-0045"]._battery.health, V["PM-R90-24-0045"]._battery.cycles = 81, 410
     V["PM-C60-24-0121"]._battery.health, V["PM-C60-24-0121"]._battery.cycles = 68, 260
     V["PM-MG-24-0302"]._battery.health, V["PM-MG-24-0302"]._battery.cycles = 94, 150
@@ -107,7 +120,8 @@ def seed(db: Session) -> bool:
     for no, o, amt, me, when in [(5001, 1078, 142000, "Cash", rubel_delivered - timedelta(days=2)), (5002, 1079, 72000, "Bank", ago(207)),
                                  (5003, 1080, 20000, "Cash", ago(260)), (5004, 1080, 10000, "bKash", ago(168)),
                                  (5005, 1080, 10000, "Nagad", ago(76)), (5006, 1081, 50000, "Bank", ago(15)),
-                                 (5007, 1080, 5000, "bKash", ago(13)), (5008, 1081, 15000, "bKash", T)]:
+                                 (5007, 1080, 5000, "bKash", ago(13)), (5008, 1081, 15000, "bKash", T),
+                                 (5009, 1082, 30000, "Cash", ago(40))]:
         db.add(Payment(number=no, order_id=O[o].id, amount=amt, method=me, paid_on=when, received_by="Rina"))
 
     for cust, m, stage, src, days, fu in [("Rahim Ahmed", "c60", 6, "Facebook", 262, False), ("Salma Khatun", "mg", 6, "Walk-in", 208, False),
@@ -154,7 +168,7 @@ def seed(db: Session) -> bool:
 
     db.add(WarrantyClaim(number=301, vehicle_id=V["PM-C60-24-0121"].id, component="Battery",
                          description="Range dropped to about 40 km per charge", created_on=ago(1)))
-    for name, value in [("order", 1081), ("payment", 5008), ("job", 247), ("quotation", 1081), ("claim", 301)]:
+    for name, value in [("order", 1082), ("payment", 5009), ("job", 247), ("quotation", 1081), ("claim", 301)]:
         db.add(Counter(name=name, value=value))
     for u, a in [("Hasan", "Changed price of Rider 90"), ("Karim", "Job #245 moved to Repair"),
                  ("Shakil", "Sold 1 × Charger 60V at counter"), ("Rina", "Recorded payment #5008 · ৳15,000 bKash · order #1081"),
@@ -165,7 +179,9 @@ def seed(db: Session) -> bool:
 
 
 def init_db() -> None:
+    from .migrate import upgrade
     Base.metadata.create_all(engine)
+    upgrade()
 
 
 if __name__ == "__main__":

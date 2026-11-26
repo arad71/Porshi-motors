@@ -116,7 +116,8 @@ def parts_issued(db: Session = Depends(get_db), _=Depends(require("issued"))):
 def warranty(db: Session = Depends(get_db), _=Depends(require("warranty"))):
     cfg = get_settings(db)
     out = []
-    for o in db.scalars(select(Order).where(Order.status == "delivered").order_by(Order.delivered_on.desc())).all():
+    for o in db.scalars(select(Order).where(Order.status == "delivered", Order.vehicle_id.isnot(None))
+                        .order_by(Order.delivered_on.desc())).all():
         b = db.scalar(select(Battery).where(Battery.vehicle_id == o.vehicle_id, Battery.status == "fitted"))
         vw = int(cfg["vehicle_warranty_months"])
         out.append({"order_number": o.number, "customer": customer_out(o.customer), "model": o.model.name,
